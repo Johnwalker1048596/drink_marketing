@@ -33,11 +33,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-cup_campaign_db}
     volumes:
-      - ./infra/postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres_data:/var/lib/postgresql
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -58,6 +58,18 @@ services:
     networks:
       - app-network
 
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: always
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command:
+      - "http"
+      - "minio:9000" # 這裡指向你的 MinIO 服務名稱與埠號
+    ports:
+      - "4040:4040" # ngrok 本地控制台
+    networks:
+      - app-network
   crawler:
     build:
       context: ./crawler
@@ -66,6 +78,7 @@ services:
       - .env
     volumes:
       - ./crawler/data:/app/data
+      - ./backend:/app/backend
     depends_on:
       postgres:
         condition: service_healthy

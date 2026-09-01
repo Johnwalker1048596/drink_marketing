@@ -1,12 +1,14 @@
 import asyncio
 import logging
-from datetime import datetime
-from threading import Event
+from datetime import datetime, timedelta
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-from spiders import news_spider, news_analyzer
+from spiders import news_analyzer
+from spiders.weather_spider import WeatherSpider
+from spiders.beverage_spider import run_beverage_pipeline
+from spiders.fruit_spider import run_crawler as run_fruit_crawler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,63 +17,79 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_news_pipeline():
-    """Run news scrape then analyze (sequential)."""
-    date_str = datetime.now().strftime("%Y%m%d")
-    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
-
-    logger.info("=== Starting news pipeline for %s ===", formatted_date)
-
-    # Step 1: Scrape news
+async def run_news_pipeline():
+    """Run Gemini Google Search to find trending topics."""
+    logger.info("=== Starting news trends pipeline ===")
     try:
-        articles = news_spider.run(date_str=date_str)
-        logger.info("News scrape complete: %d articles", len(articles))
+        await news_analyzer.run()
+        logger.info("News trends pipeline complete")
     except Exception:
-        logger.exception("News scrape failed")
-        return
+        logger.exception("News trends pipeline failed")
 
-    if not articles:
-        logger.warning("No articles scraped, skipping analysis")
-        return
 
-    # Step 2: Analyze news
-    input_file = f"/app/data/ettoday_{formatted_date}.json"
+async def run_weather_pipeline():
+    """Run weather forecast scrape and update."""
+    logger.info("=== Starting weather pipeline ===")
     try:
-        result = asyncio.run(news_analyzer.run(input_file))
-        if result:
-            logger.info(
-                "News analysis complete: %d qualified articles",
-                result["stats"]["qualified"],
-            )
+        weather_spider = WeatherSpider()
+        await asyncio.to_thread(weather_spider.run)
+        logger.info("Weather pipeline complete")
     except Exception:
-        logger.exception("News analysis failed")
+        logger.exception("Weather pipeline failed")
 
 
-def run_all():
-    """Run all spiders."""
-    run_news_pipeline()
+async def run_beverage_task():
+    """Run beverage menu scrape and update."""
+    logger.info("=== Starting beverage pipeline ===")
+    try:
+        await asyncio.to_thread(run_beverage_pipeline)
+        logger.info("Beverage pipeline complete")
+    except Exception:
+        logger.exception("Beverage pipeline failed")
 
 
-def main():
+async def run_fruit_pipeline():
+    """Run fruit price scrape and update."""
+    logger.info("=== Starting fruit pipeline ===")
+    try:
+        logger.info("Targeting fruit data for the past 7 days.")
+        await asyncio.to_thread(run_fruit_crawler)
+        
+        logger.info("Fruit pipeline complete")
+    except Exception:
+        logger.exception("Fruit pipeline failed")
+
+
+async def run_all():
+    """Run all spiders concurrently."""
+    await asyncio.gather(
+        run_weather_pipeline(),
+        run_beverage_task(),
+        run_news_pipeline(),
+        run_fruit_pipeline(), # 已將水果爬蟲加入並發清單
+    )
+
+
+async def main():
     logger.info("Crawler service starting...")
 
-    # Run once immediately on startup
-    run_all()
+    # 1. 啟動時立刻跑一次 (Run once immediately on startup)
+    await run_all()
 
-    # Schedule daily runs
-    scheduler = BackgroundScheduler()
+    # 2. 設定每天凌晨 3 點的排程 (Schedule daily runs at 3 AM)
+    scheduler = AsyncIOScheduler()
     scheduler.add_job(
         run_all,
-        trigger=IntervalTrigger(days=1),
+        trigger=CronTrigger(hour=3, minute=0),
         id="daily_crawl",
         name="Daily crawl job",
     )
     scheduler.start()
-    logger.info("Scheduler started, next run in 24 hours")
+    logger.info("Scheduler started, scheduled to run daily at 03:00")
 
     # Keep process alive
-    Event().wait()
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

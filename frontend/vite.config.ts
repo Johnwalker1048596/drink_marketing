@@ -16,4 +16,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      // 當前端請求以 /api 開頭時，自動轉發到 Flask
+      '/api': {
+        target: process.env.API_TARGET || 'http://127.0.0.1:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
 })
+
